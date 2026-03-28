@@ -395,7 +395,7 @@ Implementations MAY add fields to the `meta` object for implementation-specific 
 New message `type` values not defined in this spec MUST be prefixed with a namespace to avoid collision:
 
 ```json
-{ "type": "lumen.wake-event", "content": { ... } }
+{ "type": "ethos.wake-event", "content": { ... } }
 { "type": "myframework.custom-type", "content": { ... } }
 ```
 
@@ -475,5 +475,5 @@ For a protocol that may carry hundreds of messages per hour between agents, the 
 
 ---
 
-*Specification by Aires Noronha. Reference implementation: Lumen.*
+*Specification by Aires Noronha. Reference implementation: Ethos Engine.*
 *Last updated: 2026-03-28*

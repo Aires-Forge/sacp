@@ -53,9 +53,9 @@ These are implementation concerns. SACP is the wire protocol only.
 
 ## Reference Implementation
 
-**Lumen** is the reference implementation of SACP. Lumen's inter-agent communication module is built on SACP and serves as the canonical example of how a full implementation works — including trust management, injection shielding, and tool request handling.
+**Ethos Engine** is the reference implementation of SACP. Ethos Engine's inter-agent communication module is built on SACP and serves as the canonical example of how a full implementation works — including trust management, injection shielding, and tool request handling.
 
-→ [Lumen project](https://github.com/airesnoronha/lumen) *(coming soon)*
+→ [Ethos Engine project](https://github.com/airesnoronha/ethos) *(coming soon)*
 
 ---
 

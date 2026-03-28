@@ -21,7 +21,7 @@
   - Compliance checklist
 - ⬜ GitHub repo created (public)
 - ⬜ Reviewed and finalized
-- ⬜ Reference implementation (Lumen Phase 5)
+- ⬜ Reference implementation (Ethos Engine Phase 5)
 
 ## Key Decisions
 
@@ -36,9 +36,9 @@
 
 1. Create GitHub repo: `sacp-protocol` under `airesnoronha`
 2. Final review of SPEC.md before publishing
-3. Reference implementation ships with Lumen Phase 5
+3. Reference implementation ships with Ethos Engine Phase 5
 
-## Relationship to Lumen
+## Relationship to Ethos Engine
 
-SACP is a standalone protocol. Lumen is the reference implementation.
-Lumen's SACP module implements this spec + adds Lumen-specific delivery (tick queue, P1/P4 priority, injection shield patterns).
+SACP is a standalone protocol. Ethos Engine is the reference implementation.
+Ethos Engine's SACP module implements this spec + adds Ethos Engine-specific delivery (tick queue, P1/P4 priority, injection shield patterns).
