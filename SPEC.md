@@ -198,7 +198,26 @@ The receiver's reply to a `tool-request`.
 `status` values: `success | error | rejected | pending`
 
 - `rejected` — receiver declined to execute (operator denied, trust insufficient, policy blocked)
-- `pending` — receiver accepted the request but execution is deferred (awaiting human approval)
+- `pending` — receiver accepted the request but execution is deferred (awaiting human approval or queued processing)
+
+**`pending` is a non-terminal status.** A receiver that responds with `pending` MUST eventually send a follow-up `tool-response` referencing the same `requestId` with a terminal status (`success`, `error`, or `rejected`). Senders MUST retain request state until a terminal response is received or the request's `ttl` expires.
+
+The `pending` response MAY include a `timeout` hint in the content to signal the expected resolution window:
+
+```json
+{
+  "type": "tool-response",
+  "content": {
+    "requestId": "uuid-v4-matching-the-request",
+    "status": "pending",
+    "timeout": 300,
+    "result": null,
+    "error": null
+  }
+}
+```
+
+`timeout` is the number of seconds within which the receiver expects to send a terminal response. It is advisory only — senders SHOULD NOT treat expiry of the timeout as a hard failure, but MAY surface it to their operator as a stalled request. If no `timeout` is provided, the sender SHOULD apply its own reasonable timeout policy.
 
 ---
 
@@ -290,6 +309,18 @@ Implementations SHOULD NOT process `unknown` agent messages before operator revi
 ### 6.4 Trust Is Per-Agent-Pair
 
 Trust is scoped to the specific receiver agent, not globally. Agent A trusting agent B does not imply agent C trusts agent B, even if A and C run on the same machine.
+
+### 6.5 Trust Anchoring and Instance Identity
+
+**Trust is anchored to the `agentId` + public key fingerprint pair** — not to `instanceId`.
+
+The `instanceId` in the envelope is routing and session metadata. It identifies which running deployment sent the message, but it is not a trust boundary. A receiver MUST NOT reject a message solely because the sender's `instanceId` has changed since the last interaction.
+
+The public key is the source of truth for identity verification. If the key in the envelope matches the trusted fingerprint for that `agentId`, the message is from the trusted agent — regardless of whether the `instanceId` is new.
+
+**Key rotation requires re-verification.** If an agent generates a new key pair (e.g. after a disaster recovery, fresh deployment, or deliberate rotation), the fingerprint changes. A receiver MUST treat a new fingerprint as a first-contact event (Section 6.3) — the existing trust relationship does NOT automatically transfer to the new key. The operators of both agents MUST re-verify out-of-band before trust is re-established.
+
+**Addressing when `instanceId` is unknown.** A sender MAY omit `to.instanceId` or set it to `null` when the receiver's current instance is not known (e.g. first contact, or after the receiver restarted). Receivers MUST accept messages where `to.instanceId` is null or does not match their current instance, provided the message is otherwise valid (correct `to.agentId`, valid signature, trusted key). Receivers SHOULD NOT reject messages on the basis of a stale or missing `to.instanceId` alone.
 
 ---
 
@@ -476,4 +507,4 @@ For a protocol that may carry hundreds of messages per hour between agents, the 
 ---
 
 *Specification by Aires Noronha. Reference implementation: Ethos Engine.*
-*Last updated: 2026-03-28*
+*Last updated: 2026-04-01*
