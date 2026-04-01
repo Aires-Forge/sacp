@@ -449,7 +449,6 @@ A compliant SACP implementation MUST:
 A compliant implementation SHOULD:
 
 - Support all message types defined in Section 5
-- Implement per-scope circuit breaking for fault tolerance
 - Scan incoming content for injection patterns (Section 7.4)
 - Surface first-contact fingerprints to operators in a human-readable format
 
