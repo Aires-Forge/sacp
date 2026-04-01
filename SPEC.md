@@ -305,6 +305,8 @@ The receiver MUST reply with a `tool-response` carrying the current status of th
 
 Receivers SHOULD verify that the querying agent's `agentId` matches the `agentId` of the original `tool-request` sender. If it does not match, the receiver MUST reject the query with `error` and code `REQUESTER_MISMATCH`. This prevents status leakage to unrelated agents.
 
+**Rate limiting.** A sender reconnecting after connection loss could poll `tool-status` in a tight loop, creating a DoS risk. Senders SHOULD wait at least **10 seconds** between `tool-status` queries for the same `requestId`. Receivers MAY reject excessive queries with `error` and code `RATE_LIMITED`, and SHOULD document their rate limit policy.
+
 ---
 
 ### 5.6 `ping` / `pong`
@@ -345,7 +347,7 @@ Implementations SHOULD support at minimum these trust levels:
 | `unknown` | First contact — no prior relationship |
 | `known` | Operator has reviewed and approved this agent's fingerprint |
 | `trusted` | Known + operator has explicitly granted elevated interaction rights |
-| `blocked` | Operator has explicitly rejected this agent; all messages silently dropped |
+| `blocked` | Operator has explicitly rejected this agent; connection is refused and all messages are dropped without acknowledgment (see Section 8.4) |
 
 Implementations MAY define additional levels. They MUST NOT reduce trust below what operators have set.
 
@@ -360,6 +362,12 @@ When a message arrives from an agent not in the local trust store:
 5. Message is either processed (approved) or dropped (rejected)
 
 Implementations SHOULD NOT process `unknown` agent messages before operator review. They MUST NOT auto-trust unknown agents.
+
+**Handling the triggering message.** The message that initiates a first-contact flow creates an ambiguity: hold it for later processing, or drop it and require the sender to resend? The recommended behavior is:
+
+- Implementations SHOULD **drop** the triggering message after operator approval and expect the sender to resend. Holding messages in a queue during an unbounded operator review window introduces memory pressure, ordering complexity, and stale-message risk.
+- If an implementation chooses to queue the triggering message, it MUST apply a maximum queue hold time (SHOULD be no longer than the message's `ttl`, or 5 minutes if no `ttl` is set) and drop it if the hold time expires before operator decision.
+- Implementations SHOULD notify the sender that a first-contact review is in progress (e.g. via an `event` message if a response channel is available), so the sender knows to expect a delay and can resend if needed.
 
 ### 6.4 Trust Is Per-Agent-Pair
 
@@ -392,7 +400,14 @@ The public key is the source of truth for identity verification. If the key in t
 }
 ```
 
-`effectiveAfter` is optional but SHOULD be included to give peers a grace window. Upon receiving this event, peers SHOULD notify their operator to re-verify the new fingerprint out-of-band before accepting messages signed with the new key. Peers MUST NOT automatically trust the new key without operator re-verification.
+Upon receiving a `key-rotation` event, receivers SHOULD:
+1. **Validate `newPublicKey`** — verify it is a well-formed base64-encoded Ed25519 public key (32 bytes decoded). Malformed or oversized values MUST be rejected and SHOULD be surfaced to the operator as a suspicious event. The key MUST NOT be stored or acted upon before validation passes.
+2. **Validate `newFingerprint`** — verify it matches the SHA-256 fingerprint of the decoded `newPublicKey`. A mismatch MUST be rejected.
+3. **Notify the operator** to re-verify the new fingerprint out-of-band before accepting messages signed with the new key.
+
+**`effectiveAfter` handling.** If `effectiveAfter` is omitted, receivers SHOULD treat the rotation as effective immediately — i.e., the sender may begin using the new key at any time after the notification is sent. If `effectiveAfter` is present, receivers SHOULD surface it to the operator as the expected activation time.
+
+Peers MUST NOT automatically trust the new key without operator re-verification, regardless of `effectiveAfter`.
 
 **Addressing when `instanceId` is unknown.** A sender MAY omit `to.instanceId` or set it to `null` when the receiver's current instance is not known (e.g. first contact, or after the receiver restarted). Receivers MUST accept messages where `to.instanceId` is null or does not match their current instance, provided the message is otherwise valid (correct `to.agentId`, valid signature, trusted key). Receivers SHOULD NOT reject messages on the basis of a stale or missing `to.instanceId` alone.
 
@@ -433,6 +448,14 @@ The specific labeling format is implementation-defined, but MUST make clear:
 ```
 
 Implementations MUST NOT inject SACP content as if it were operator or system instructions.
+
+### 7.5 Maximum Message Size
+
+The spec limits `handoff` context to 32KB (Section 5.5), but no overall envelope limit would allow a malicious or buggy agent to send arbitrarily large payloads — exhausting receiver memory or stalling its event loop.
+
+Implementations SHOULD enforce a maximum total envelope size of **1MB** (1,048,576 bytes) for any single SACP message. Messages exceeding this limit SHOULD be rejected before deserialization. Implementations MAY enforce a stricter limit and SHOULD document their chosen value.
+
+Receivers SHOULD close the connection if an oversized message is received, as it may indicate a misbehaving or malicious sender.
 
 ### 7.4 Injection Defense
 
@@ -477,7 +500,7 @@ Over WebSocket, each SACP message is sent as a single WebSocket text frame conta
 - Receiver checks sender's fingerprint against trust store
 - If `unknown`: receiver surfaces first-contact flow to operator (connection held or rejected pending approval)
 - If `known` or higher: connection accepted
-- If `blocked`: connection immediately closed, no acknowledgment
+- If `blocked`: connection immediately closed, no acknowledgment. **`blocked` means the connection is refused entirely** — the receiver does not accept the connection and process messages silently; it terminates the connection at the transport level. This is consistent with Section 6.2.
 
 ### 8.5 Connection Loss and Pending Request Recovery
 
@@ -541,14 +564,19 @@ A compliant SACP implementation MUST:
 - Use `wss://` for remote transport (Section 8.1)
 - Return a structured `error` object (Section 5.3) when `status` is `error` or `rejected`
 - Reject `tool-status` queries where the requester's `agentId` does not match the original sender (Section 5.7)
+- Reject and drop `key-rotation` events where `newPublicKey` fails Ed25519 format validation or `newFingerprint` does not match (Section 6.5)
+- Refuse connections from `blocked` agents at the transport level — do not accept and silently drop (Section 8.4)
 
 A compliant implementation SHOULD:
 
 - Support all message types defined in Section 5, including `tool-status` (Section 5.7)
 - Persist `pending` request state to durable storage (Section 8.5)
 - Notify peers before key rotation using a `key-rotation` event (Section 6.5)
+- Enforce a maximum envelope size of 1MB (Section 7.5)
 - Enforce a maximum `context` size on incoming `handoff` messages (Section 5.5)
 - Apply ping/pong timeout defaults from Section 5.6
+- Follow first-contact message handling guidance (Section 6.3)
+- Wait at least 10 seconds between `tool-status` queries for the same `requestId` (Section 5.7)
 - Scan incoming content for injection patterns (Section 7.4)
 - Surface first-contact fingerprints to operators in a human-readable format
 
@@ -606,4 +634,4 @@ For a protocol that may carry hundreds of messages per hour between agents, the 
 ---
 
 *Specification by Aires Noronha. Reference implementation: Ethos Engine.*
-*Last updated: 2026-04-01 — v0.2.0 (rev 2)*
+*Last updated: 2026-04-01 — v0.2.0 (rev 3)*

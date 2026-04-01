@@ -7,9 +7,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.2.0] — 2026-04-01 (rev 2)
+## [0.2.0] — 2026-04-01 (rev 3)
 
 ### Added
+
+- **Section 7.5 — Maximum message size**
+  New section. Implementations SHOULD enforce a 1MB maximum total envelope size.
+  Messages exceeding this SHOULD be rejected before deserialization. Receivers SHOULD
+  close the connection on oversized messages. Implementations MAY enforce stricter limits.
+
+- **Section 6.5 — key-rotation validation requirements**
+  Receivers SHOULD validate `newPublicKey` is a well-formed 32-byte Ed25519 key before
+  storing or surfacing it. `newFingerprint` MUST match the decoded key's SHA-256 hash.
+  Malformed values MUST be rejected. If `effectiveAfter` is omitted, treat rotation as
+  effective immediately.
+
+- **Section 6.3 — First-contact message handling guidance**
+  Spec now recommends dropping the triggering message and expecting the sender to resend,
+  rather than holding it in an unbounded queue. If queuing is implemented, a maximum hold
+  time applies (message `ttl` or 5 minutes). Implementations SHOULD notify the sender
+  that a first-contact review is in progress.
+
+- **Section 5.7 — tool-status rate limiting**
+  Senders SHOULD wait at least 10 seconds between queries for the same `requestId`.
+  Receivers MAY reject excessive queries with `RATE_LIMITED` error code.
 
 - **Section 3.2 — agentName format constraints**
   `agentName` MUST match `[a-zA-Z0-9_-]`. The `@` character is explicitly forbidden —
@@ -37,6 +58,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   disk on startup before processing any incoming messages.
 
 ### Fixed
+
+- **Section 6.2 / 8.4 — `blocked` behavior reconciled**
+  Section 6.2 said messages are "silently dropped"; Section 8.4 said connections are
+  closed immediately. Now consistent: `blocked` means the connection is refused at the
+  transport level. The receiver does not accept then silently discard — it terminates
+  the connection outright.
 
 - **Section 4 envelope example — `"sacp": "0.1"` corrected to `"0.2"`**
   The example JSON in Section 4 was still showing `"sacp": "0.1"`, contradicting the
