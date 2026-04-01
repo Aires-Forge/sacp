@@ -1,5 +1,5 @@
 # SACP Specification
-**Version:** 0.1.0 (draft)
+**Version:** 0.2.0 (draft)
 **Status:** Pre-release
 **Author:** Aires Noronha
 
@@ -475,6 +475,8 @@ The `sacp` field in the envelope carries the protocol version.
 - Minor version increments (0.1 → 0.2) indicate backwards-compatible additions
 - Major version increments (0.x → 1.0) indicate breaking changes
 
+> **Current version:** The `sacp` field in envelopes MUST be `"0.2"` for implementations targeting this spec version.
+
 Implementations SHOULD log the version of incoming messages for debugging.
 
 ---
@@ -574,4 +576,4 @@ For a protocol that may carry hundreds of messages per hour between agents, the 
 ---
 
 *Specification by Aires Noronha. Reference implementation: Ethos Engine.*
-*Last updated: 2026-04-01 (rev 2)*
+*Last updated: 2026-04-01 — v0.2.0*

@@ -2,7 +2,7 @@
 
 > An open, framework-agnostic protocol for agent-to-agent communication.
 
-**Version:** 0.1.0 (draft)
+**Version:** 0.2.0 (draft)
 **Status:** Pre-release — specification in progress
 **License:** MIT
 **Author:** Aires Noronha
@@ -55,7 +55,7 @@ These are implementation concerns. SACP is the wire protocol only.
 
 **Ethos Engine** is the reference implementation of SACP. Ethos Engine's inter-agent communication module is built on SACP and serves as the canonical example of how a full implementation works — including trust management, injection shielding, and tool request handling.
 
-→ [Ethos Engine project](https://github.com/airesnoronha/ethos) *(coming soon)*
+→ [Ethos Engine project](https://github.com/Aires-Forge/ethos-engine) *(coming soon)*
 
 ---
 
