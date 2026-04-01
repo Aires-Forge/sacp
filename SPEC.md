@@ -288,27 +288,6 @@ Transfer of context or responsibility from one agent to another.
 
 ---
 
-### 5.7 `tool-status`
-
-A query from the original requester to check the current state of a previously submitted `tool-request`. Used for recovery after connection loss. See Section 8.5 for full context.
-
-```json
-{
-  "type": "tool-status",
-  "content": {
-    "requestId": "uuid-v4-of-the-original-request"
-  }
-}
-```
-
-The receiver MUST reply with a `tool-response` carrying the current status of the request (`success`, `error`, `rejected`, or `pending`). If the receiver has no record of the `requestId`, it MUST reply with `error` and code `REQUEST_NOT_FOUND`.
-
-Receivers SHOULD verify that the querying agent's `agentId` matches the `agentId` of the original `tool-request` sender. If it does not match, the receiver MUST reject the query with `error` and code `REQUESTER_MISMATCH`. This prevents status leakage to unrelated agents.
-
-**Rate limiting.** A sender reconnecting after connection loss could poll `tool-status` in a tight loop, creating a DoS risk. Senders SHOULD wait at least **10 seconds** between `tool-status` queries for the same `requestId`. Receivers MAY reject excessive queries with `error` and code `RATE_LIMITED`, and SHOULD document their rate limit policy.
-
----
-
 ### 5.6 `ping` / `pong`
 
 Liveness check.
@@ -327,6 +306,27 @@ Receivers MUST reply with a `pong` immediately upon receiving a `ping`.
 - On connection-dead detection, senders SHOULD close the WebSocket and attempt reconnection
 
 These are recommended defaults. Implementations MAY use different values but SHOULD document their chosen timeouts to aid interoperability diagnostics.
+
+---
+
+### 5.7 `tool-status`
+
+A query from the original requester to check the current state of a previously submitted `tool-request`. Used for recovery after connection loss. See Section 8.5 for full context.
+
+```json
+{
+  "type": "tool-status",
+  "content": {
+    "requestId": "uuid-v4-of-the-original-request"
+  }
+}
+```
+
+The receiver MUST reply with a `tool-response` carrying the current status of the request (`success`, `error`, `rejected`, or `pending`). If the receiver has no record of the `requestId`, it MUST reply with `error` and code `REQUEST_NOT_FOUND`.
+
+Receivers SHOULD verify that the querying agent's `agentId` matches the `agentId` of the original `tool-request` sender. If it does not match, the receiver MUST reject the query with `error` and code `REQUESTER_MISMATCH`. This prevents status leakage to unrelated agents.
+
+**Rate limiting.** A sender reconnecting after connection loss could poll `tool-status` in a tight loop, creating a DoS risk. Senders SHOULD wait at least **10 seconds** between `tool-status` queries for the same `requestId`. Receivers MAY reject excessive queries with `error` and code `RATE_LIMITED`, and SHOULD document their rate limit policy.
 
 ---
 
