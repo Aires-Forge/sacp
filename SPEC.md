@@ -104,7 +104,7 @@ Every SACP message MUST use this envelope format:
 | `from.instanceId` | string (UUID v4) | Sender's instance ID |
 | `from.publicKey` | string (base64) | Sender's Ed25519 public key |
 | `to.agentId` | string | Receiver's agent name |
-| `to.instanceId` | string (UUID v4) | Receiver's instance ID |
+| `to.instanceId` | string (UUID v4) or `null` | Receiver's instance ID. MAY be `null` when the sender does not know the receiver's current instance (e.g. first contact, post-restart). See Section 6.5. |
 | `type` | string | Message type (see Section 5) |
 | `content` | object | Type-specific payload (see Section 5) |
 | `timestamp` | string (ISO 8601) | Message creation time in UTC |
@@ -121,17 +121,21 @@ Every SACP message MUST use this envelope format:
 
 ### 4.3 Signature Computation
 
-The signature covers a canonical representation of the message body — everything except the `signature` field itself:
+The signature covers a canonical representation of the message body — everything except the `signature` field itself.
+
+**Canonical form MUST be produced using RFC 8785 (JSON Canonicalization Scheme — JCS).** JCS defines a deterministic serialization: UTF-8 encoding, no whitespace, lexicographic key sorting applied recursively at every nesting level. Implementations MUST use a compliant JCS library rather than a native `JSON.stringify` call, which does not sort keys and will produce different output across languages and runtimes — breaking cross-implementation signature verification.
 
 ```
-canonical = JSON.stringify({
+canonical = JCS.serialize({
   sacp, id, from, to, type, content, timestamp, nonce
-}, null, 0)  // no whitespace, sorted keys
+})
 
 signature = Ed25519.sign(canonical, privateKey)
 ```
 
-Receivers MUST verify the signature before processing any message. Messages with invalid signatures MUST be rejected and SHOULD be logged.
+Reference implementations of JCS are available for all major languages (see [https://github.com/cyberphone/json-canonicalization](https://github.com/cyberphone/json-canonicalization)).
+
+Receivers MUST verify the signature before processing any message. Verification MUST use the same JCS canonical form. Messages with invalid signatures MUST be rejected and SHOULD be logged.
 
 ---
 
@@ -194,6 +198,26 @@ The receiver's reply to a `tool-request`.
   }
 }
 ```
+
+When `status` is `error` or `rejected`, the `error` field MUST be a structured object:
+
+```json
+{
+  "error": {
+    "code": "EXECUTION_FAILED",
+    "message": "git command exited with status 1",
+    "detail": { }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `code` | string | Machine-readable error identifier. SHOULD be UPPER_SNAKE_CASE. Implementation-defined. |
+| `message` | string | Human-readable description of the error. |
+| `detail` | object | Optional. Structured context (stack traces, exit codes, etc.). Implementation-defined schema. |
+
+When `status` is `success` or `pending`, `error` MUST be `null`.
 
 `status` values: `success | error | rejected | pending`
 
@@ -260,6 +284,8 @@ Transfer of context or responsibility from one agent to another.
 
 `returnTo: true` signals that the sender expects a follow-up message when the task is complete.
 
+**Context size guidance.** The `context` field SHOULD be a concise summary of the relevant state — not a raw conversation history or full memory dump. Senders SHOULD keep `context` under 32KB. Large context payloads are a denial-of-service risk and may exhaust the receiving agent's available context window. Implementations SHOULD enforce a maximum `context` size and reject or truncate handoffs that exceed it.
+
 ---
 
 ### 5.6 `ping` / `pong`
@@ -270,6 +296,16 @@ Liveness check.
 { "type": "ping", "content": {} }
 { "type": "pong", "content": {} }
 ```
+
+Receivers MUST reply with a `pong` immediately upon receiving a `ping`.
+
+**Timeout and interval guidance.** To ensure consistent liveness detection across implementations:
+
+- Senders SHOULD send a `ping` after **60 seconds of connection inactivity** (no messages in either direction)
+- Senders SHOULD consider a connection dead if no `pong` is received within **30 seconds** of sending a `ping`
+- On connection-dead detection, senders SHOULD close the WebSocket and attempt reconnection
+
+These are recommended defaults. Implementations MAY use different values but SHOULD document their chosen timeouts to aid interoperability diagnostics.
 
 ---
 
@@ -403,6 +439,32 @@ Over WebSocket, each SACP message is sent as a single WebSocket text frame conta
 - If `known` or higher: connection accepted
 - If `blocked`: connection immediately closed, no acknowledgment
 
+### 8.5 Connection Loss and Pending Request Recovery
+
+When a WebSocket connection drops while a `tool-request` is in `pending` state, the sender loses visibility into whether the task eventually completed. SACP does not mandate a full durability layer, but defines a recovery path:
+
+**Sender obligations:**
+- Implementations SHOULD persist `pending` request state to durable storage (not only in-memory). This ensures outstanding requests survive the sender's own restarts.
+- On reconnection, senders MAY query the status of outstanding requests using a `tool-status` message (see below).
+
+**`tool-status` message type:**
+
+```json
+{
+  "type": "tool-status",
+  "content": {
+    "requestId": "uuid-v4-of-the-original-request"
+  }
+}
+```
+
+The receiver MUST reply with a `tool-response` for that `requestId`, using whatever terminal status the request reached — or `pending` if it is still in progress. If the receiver has no record of the `requestId` (e.g. the receiver itself restarted and lost state), it MUST reply with `error` and code `REQUEST_NOT_FOUND`.
+
+**Receiver obligations:**
+- Implementations SHOULD persist pending request state on the receiver side as well, so that `tool-status` queries can be answered after reconnection.
+
+**Scope of this guarantee:** SACP does not guarantee exactly-once delivery or atomic execution. Full reliability requires implementation-level durable queues. `tool-status` provides a best-effort recovery path — not a transaction log.
+
 ---
 
 ## 9. Versioning
@@ -439,16 +501,22 @@ Receivers that receive an unknown `type` MAY ignore the message or surface it to
 A compliant SACP implementation MUST:
 
 - Generate valid Ed25519 key pairs on initialization
-- Sign all outgoing messages using the canonical signature method (Section 4.3)
-- Verify signatures on all incoming messages before processing
+- **Persist key pairs to durable storage** — keys MUST NOT be regenerated on restart unless the operator explicitly initiates key rotation
+- Sign all outgoing messages using RFC 8785 (JCS) canonical form (Section 4.3)
+- Verify signatures on all incoming messages using JCS canonical form before processing
 - Maintain a nonce store and reject replayed messages (Section 7.1)
 - Require human trust establishment before processing `unknown` agent messages (Section 6.3)
 - Label SACP content as external before context injection (Section 7.3)
 - Use `wss://` for remote transport (Section 8.1)
+- Return a structured `error` object (Section 5.3) when `status` is `error` or `rejected`
 
 A compliant implementation SHOULD:
 
 - Support all message types defined in Section 5
+- Persist `pending` request state to durable storage (Section 8.5)
+- Respond to `tool-status` queries for outstanding requests (Section 8.5)
+- Enforce a maximum `context` size on incoming `handoff` messages (Section 5.5)
+- Apply ping/pong timeout defaults from Section 5.6
 - Scan incoming content for injection patterns (Section 7.4)
 - Surface first-contact fingerprints to operators in a human-readable format
 
@@ -506,4 +574,4 @@ For a protocol that may carry hundreds of messages per hour between agents, the 
 ---
 
 *Specification by Aires Noronha. Reference implementation: Ethos Engine.*
-*Last updated: 2026-04-01*
+*Last updated: 2026-04-01 (rev 2)*
