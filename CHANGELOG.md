@@ -7,9 +7,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.2.0] — 2026-04-01
+## [0.2.0] — 2026-04-01 (rev 2)
 
 ### Added
+
+- **Section 3.2 — agentName format constraints**
+  `agentName` MUST match `[a-zA-Z0-9_-]`. The `@` character is explicitly forbidden —
+  it is the separator in the full `agentName@instanceId` identity string and would make
+  parsing ambiguous if present in the name itself.
+
+- **Section 5.7 — `tool-status` message type (promoted from Section 8.5)**
+  `tool-status` now has a proper entry in the message types section where developers
+  expect to find all message types. Section 8.5 references it rather than redefining it.
+  Added explicit requester authentication: receivers MUST reject queries where the
+  requester's `agentId` does not match the original `tool-request` sender, returning
+  `REQUESTER_MISMATCH`. Prevents task status leakage to unrelated agents.
+
+- **Section 6.5 — Key rotation notification (`key-rotation` event)**
+  Without proactive notification, peers silently start rejecting messages after key
+  rotation with no indication of why. Agents planning a rotation SHOULD send a
+  `key-rotation` event (signed with the old key) to all trusted peers before rotating.
+  Event includes `newPublicKey`, `newFingerprint`, optional `effectiveAfter`, and `reason`.
+  Peers MUST NOT auto-trust the new key — operator re-verification is still required.
+
+- **Section 7.1 — Nonce store persistence**
+  The nonce store MUST be persisted to durable storage. An in-memory-only nonce store
+  is wiped on restart, allowing replay attacks against a freshly restarted receiver using
+  any message from the last 24 hours. Implementations MUST load the nonce store from
+  disk on startup before processing any incoming messages.
+
+### Fixed
+
+- **Section 4 envelope example — `"sacp": "0.1"` corrected to `"0.2"`**
+  The example JSON in Section 4 was still showing `"sacp": "0.1"`, contradicting the
+  Section 9 note that `"0.2"` is required. Fixed.
+
+- **Section 4.1 field table — `sacp` field description corrected to `"0.2"`**
+  Same inconsistency in the required fields table. Fixed.
+
+- **Appendix A example — `"sacp": "0.1"` corrected to `"0.2"`**
+  The full exchange example was still using `"sacp": "0.1"`. Fixed.
 
 - **Section 5.3 — Structured error format**
   The `error` field in `tool-response` now has a defined schema: `{code, message, detail}`.

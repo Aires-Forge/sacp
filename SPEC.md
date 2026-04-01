@@ -48,7 +48,7 @@ An agent's identity is expressed as:
 {agentName}@{instanceId}
 ```
 
-- `agentName` — a human-readable name (e.g. `meri`, `hal`, `aria`)
+- `agentName` — a human-readable name (e.g. `meri`, `hal`, `aria`). MUST contain only alphanumeric characters, hyphens, and underscores (`[a-zA-Z0-9_-]`). The `@` character is explicitly forbidden — it is the separator between `agentName` and `instanceId` in the full agent ID string and its presence in a name would make parsing ambiguous.
 - `instanceId` — a UUID v4 generated at agent initialization; persists across restarts
 
 Examples:
@@ -75,7 +75,7 @@ Every SACP message MUST use this envelope format:
 
 ```json
 {
-  "sacp": "0.1",
+  "sacp": "0.2",
   "id": "uuid-v4",
   "from": {
     "agentId": "meri",
@@ -98,7 +98,7 @@ Every SACP message MUST use this envelope format:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `sacp` | string | Protocol version. MUST be `"0.1"` for this spec version. |
+| `sacp` | string | Protocol version. MUST be `"0.2"` for this spec version. |
 | `id` | string (UUID v4) | Unique message identifier |
 | `from.agentId` | string | Sender's agent name |
 | `from.instanceId` | string (UUID v4) | Sender's instance ID |
@@ -288,6 +288,25 @@ Transfer of context or responsibility from one agent to another.
 
 ---
 
+### 5.7 `tool-status`
+
+A query from the original requester to check the current state of a previously submitted `tool-request`. Used for recovery after connection loss. See Section 8.5 for full context.
+
+```json
+{
+  "type": "tool-status",
+  "content": {
+    "requestId": "uuid-v4-of-the-original-request"
+  }
+}
+```
+
+The receiver MUST reply with a `tool-response` carrying the current status of the request (`success`, `error`, `rejected`, or `pending`). If the receiver has no record of the `requestId`, it MUST reply with `error` and code `REQUEST_NOT_FOUND`.
+
+Receivers SHOULD verify that the querying agent's `agentId` matches the `agentId` of the original `tool-request` sender. If it does not match, the receiver MUST reject the query with `error` and code `REQUESTER_MISMATCH`. This prevents status leakage to unrelated agents.
+
+---
+
 ### 5.6 `ping` / `pong`
 
 Liveness check.
@@ -356,6 +375,25 @@ The public key is the source of truth for identity verification. If the key in t
 
 **Key rotation requires re-verification.** If an agent generates a new key pair (e.g. after a disaster recovery, fresh deployment, or deliberate rotation), the fingerprint changes. A receiver MUST treat a new fingerprint as a first-contact event (Section 6.3) — the existing trust relationship does NOT automatically transfer to the new key. The operators of both agents MUST re-verify out-of-band before trust is re-established.
 
+**Key rotation notification.** Without proactive notification, peers will silently start rejecting messages the moment a rotated key is used — with no indication of why. To prevent silent breakage, an agent planning a key rotation SHOULD notify all peers it holds active trust relationships with before the rotation takes effect. This notification SHOULD be sent as a `key-rotation` event (see below) using the old key, so peers can verify its authenticity before discarding the old fingerprint.
+
+```json
+{
+  "type": "event",
+  "content": {
+    "event": "key-rotation",
+    "payload": {
+      "newPublicKey": "base64-encoded-new-ed25519-public-key",
+      "newFingerprint": "ed25519:ab12:cd34:...",
+      "effectiveAfter": "2026-04-02T00:00:00.000Z",
+      "reason": "Scheduled rotation"
+    }
+  }
+}
+```
+
+`effectiveAfter` is optional but SHOULD be included to give peers a grace window. Upon receiving this event, peers SHOULD notify their operator to re-verify the new fingerprint out-of-band before accepting messages signed with the new key. Peers MUST NOT automatically trust the new key without operator re-verification.
+
 **Addressing when `instanceId` is unknown.** A sender MAY omit `to.instanceId` or set it to `null` when the receiver's current instance is not known (e.g. first contact, or after the receiver restarted). Receivers MUST accept messages where `to.instanceId` is null or does not match their current instance, provided the message is otherwise valid (correct `to.agentId`, valid signature, trusted key). Receivers SHOULD NOT reject messages on the basis of a stale or missing `to.instanceId` alone.
 
 ---
@@ -369,6 +407,8 @@ Every message carries a unique `nonce`. Receivers MUST:
 1. Store received nonces for a sliding time window (recommended: 24 hours)
 2. Reject any message whose nonce has been seen before within the window
 3. Reject any message whose `timestamp` is outside an acceptable clock skew window (recommended: ±5 minutes)
+
+**Nonce store persistence.** The nonce store MUST be persisted to durable storage. An in-memory-only nonce store is wiped on restart, allowing a replay attacker to immediately re-send any message from the last 24 hours against a freshly restarted receiver. Persistence closes this window. Implementations MUST load the nonce store from durable storage on startup before processing any incoming messages.
 
 ### 7.2 Signature Verification
 
@@ -445,20 +485,7 @@ When a WebSocket connection drops while a `tool-request` is in `pending` state, 
 
 **Sender obligations:**
 - Implementations SHOULD persist `pending` request state to durable storage (not only in-memory). This ensures outstanding requests survive the sender's own restarts.
-- On reconnection, senders MAY query the status of outstanding requests using a `tool-status` message (see below).
-
-**`tool-status` message type:**
-
-```json
-{
-  "type": "tool-status",
-  "content": {
-    "requestId": "uuid-v4-of-the-original-request"
-  }
-}
-```
-
-The receiver MUST reply with a `tool-response` for that `requestId`, using whatever terminal status the request reached — or `pending` if it is still in progress. If the receiver has no record of the `requestId` (e.g. the receiver itself restarted and lost state), it MUST reply with `error` and code `REQUEST_NOT_FOUND`.
+- On reconnection, senders MAY query the status of outstanding requests using a `tool-status` message (see Section 5.7).
 
 **Receiver obligations:**
 - Implementations SHOULD persist pending request state on the receiver side as well, so that `tool-status` queries can be answered after reconnection.
@@ -504,6 +531,8 @@ A compliant SACP implementation MUST:
 
 - Generate valid Ed25519 key pairs on initialization
 - **Persist key pairs to durable storage** — keys MUST NOT be regenerated on restart unless the operator explicitly initiates key rotation
+- **Persist the nonce store to durable storage** and load it on startup before processing any messages (Section 7.1)
+- Enforce `agentName` format constraints — no `@` or characters outside `[a-zA-Z0-9_-]` (Section 3.2)
 - Sign all outgoing messages using RFC 8785 (JCS) canonical form (Section 4.3)
 - Verify signatures on all incoming messages using JCS canonical form before processing
 - Maintain a nonce store and reject replayed messages (Section 7.1)
@@ -511,12 +540,13 @@ A compliant SACP implementation MUST:
 - Label SACP content as external before context injection (Section 7.3)
 - Use `wss://` for remote transport (Section 8.1)
 - Return a structured `error` object (Section 5.3) when `status` is `error` or `rejected`
+- Reject `tool-status` queries where the requester's `agentId` does not match the original sender (Section 5.7)
 
 A compliant implementation SHOULD:
 
-- Support all message types defined in Section 5
+- Support all message types defined in Section 5, including `tool-status` (Section 5.7)
 - Persist `pending` request state to durable storage (Section 8.5)
-- Respond to `tool-status` queries for outstanding requests (Section 8.5)
+- Notify peers before key rotation using a `key-rotation` event (Section 6.5)
 - Enforce a maximum `context` size on incoming `handoff` messages (Section 5.5)
 - Apply ping/pong timeout defaults from Section 5.6
 - Scan incoming content for injection patterns (Section 7.4)
@@ -530,7 +560,7 @@ A compliant implementation SHOULD:
 
 ```json
 {
-  "sacp": "0.1",
+  "sacp": "0.2",
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "from": {
     "agentId": "hal",
@@ -576,4 +606,4 @@ For a protocol that may carry hundreds of messages per hour between agents, the 
 ---
 
 *Specification by Aires Noronha. Reference implementation: Ethos Engine.*
-*Last updated: 2026-04-01 — v0.2.0*
+*Last updated: 2026-04-01 — v0.2.0 (rev 2)*
